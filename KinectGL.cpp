@@ -28,8 +28,9 @@
 int window;									// The number of our GLUT window
 int time,timeprev=0;						// For calculating elapsed time
 
-HANDLE pVideoStreamHandle;
+INuiSensor *pNuiSensor;
 HANDLE hNextColorFrameEvent;
+HANDLE pVideoStreamHandle;
 
 GLuint bg_texture[1];
 
@@ -40,17 +41,20 @@ void initNui(void)	        // We call this right after Nui functions called.
 {
 	HRESULT hr;
 
+	hr = NuiCreateSensorByIndex(0, &pNuiSensor);
+	if(FAILED(hr)) printf("Cannot connect a kinect0.\r\n");
+
 	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 
-	hr = NuiInitialize(NUI_INITIALIZE_FLAG_USES_COLOR);
-	if(FAILED(hr)) printf("Cannot initialize kinect\r\n");
+	hr = pNuiSensor->NuiInitialize(NUI_INITIALIZE_FLAG_USES_COLOR);
+	if(FAILED(hr)) printf("Cannot initialize kinect.\r\n");
 
-	hr = NuiImageStreamOpen(
+	hr = pNuiSensor->NuiImageStreamOpen(
 		NUI_IMAGE_TYPE_COLOR,
 		NUI_IMAGE_RESOLUTION_640x480,
 		0,
 		2,
-		NULL,
+		hNextColorFrameEvent,
 		&pVideoStreamHandle );
 	if(FAILED(hr)){
 		printf("Cannot open image stream\r\n");
@@ -59,19 +63,19 @@ void initNui(void)	        // We call this right after Nui functions called.
 
 void storeNuiData(void)
 {
-	const NUI_IMAGE_FRAME *pImageFrame = NULL;
+	NUI_IMAGE_FRAME imageFrame;
 
-	HRESULT hr =  NuiImageStreamGetNextFrame(
+	HRESULT hr =  pNuiSensor->NuiImageStreamGetNextFrame(
 		pVideoStreamHandle,
 		0,
-		&pImageFrame );
+		&imageFrame );
 	if( FAILED( hr ) ){
 		return;
 	}
-	if(pImageFrame->eImageType != NUI_IMAGE_TYPE_COLOR)
+	if(imageFrame.eImageType != NUI_IMAGE_TYPE_COLOR)
 		printf("Image type is not match with the color\r\n");
 
-	INuiFrameTexture *pTexture = pImageFrame->pFrameTexture;
+	INuiFrameTexture *pTexture = imageFrame.pFrameTexture;
 	NUI_LOCKED_RECT LockedRect;
 	pTexture->LockRect( 0, &LockedRect, NULL, 0 );
 	if( LockedRect.Pitch != 0 ){
@@ -105,7 +109,7 @@ void storeNuiData(void)
 		OutputDebugString( L"Buffer length of received texture is bogus\r\n" );
 	}
 
-	 NuiImageStreamReleaseFrame( pVideoStreamHandle, pImageFrame );
+	pNuiSensor->NuiImageStreamReleaseFrame( pVideoStreamHandle, &imageFrame );
 }
 
 void drawNuiColorImage(void)
@@ -171,7 +175,9 @@ void deinitialize(void)
 	CloseHandle( hNextColorFrameEvent );
 	hNextColorFrameEvent = NULL;
 
-	NuiShutdown();
+	pNuiSensor->NuiShutdown();
+	pNuiSensor->Release();
+	pNuiSensor = NULL;
 }
 
 /*
@@ -182,7 +188,7 @@ void reSizeGLScene(int Width, int Height)
 	if (Height==0)						// Prevent A Divide By Zero If The Window Is Too Small
 		Height=1;
 
-	glViewport(0, 0, Width, Height);
+	glViewport(0, 0, Width, Height);	// Reset The Current Viewport And Perspective Transformation
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -202,6 +208,44 @@ void NormalKeyPressed(unsigned char keys, int x, int y)
 	}
 }
 
+/*
+ * @brief The function called whenever a special key is pressed.
+ */
+void SpecialKeyPressed(int key, int x, int y)
+{
+	switch (key) {
+		case GLUT_KEY_F1:
+			break;
+	}
+}
+
+/*
+ * @brief The main drawing function.
+ */
+void drawGLScene()
+{
+	time=glutGet(GLUT_ELAPSED_TIME);
+	int milliseconds = time - timeprev;
+	timeprev = time;
+
+	float dt = milliseconds / 1000.0f;						// Convert Milliseconds To Seconds
+
+	glClear(GL_COLOR_BUFFER_BIT);
+	
+	WaitForSingleObject(hNextColorFrameEvent, 100);
+
+	storeNuiData();
+	drawNuiColorImage();
+
+	glFlush ();					// Flush The GL Rendering Pipeline
+	glutSwapBuffers();			// swap buffers to display, since we're double buffered.
+}
+
+void idleGL()
+{
+	storeNuiData();
+}
+
 int main(int argc , char ** argv) {
 	glutInit(&argc, argv);
 
@@ -210,10 +254,14 @@ int main(int argc , char ** argv) {
 	glutInitWindowPosition(0, 0);
 	window = glutCreateWindow("Kinect SDK v1.0 with OpenGL");
 	glutReshapeFunc(&reSizeGLScene);
+	//glutIdleFunc(&idleGL);
 	glutKeyboardFunc(&NormalKeyPressed);
+	glutSpecialFunc(&SpecialKeyPressed);
 
 	initNui();
 	initGL(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+	
+	//glutMainLoop();
 
 	MSG msg;
 	while(GetMessage(&msg,NULL,0,0)){
