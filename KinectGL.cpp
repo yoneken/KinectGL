@@ -15,7 +15,7 @@
 #endif /* OS */
 
 #include <ole2.h>
-#include "NuiApi.h"
+#include <NuiApi.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -263,10 +263,12 @@ int main(int argc , char ** argv) {
 	
 	//glutMainLoop();
 
-	MSG msg;
-	while(GetMessage(&msg,NULL,0,0)){
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
+	while(1){
+		MSG msg;
+		if(PeekMessage(&msg,NULL,0,0,PM_REMOVE)){
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
 		
 		glClear(GL_COLOR_BUFFER_BIT);
 
