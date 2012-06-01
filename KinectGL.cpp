@@ -30,9 +30,17 @@ int time,timeprev=0;						// For calculating elapsed time
 
 INuiSensor *pNuiSensor;
 HANDLE hNextColorFrameEvent;
+HANDLE hNextDepthFrameEvent;
 HANDLE pVideoStreamHandle;
+HANDLE pDepthStreamHandle;
 
-GLuint bg_texture[1];
+typedef enum _TEXTURE_INDEX{
+	IMAGE_TEXTURE = 0,
+	DEPTH_TEXTURE,
+	EDITED_TEXTURE,
+	TEXTURE_NUM,
+} TEXTURE_INDEX;
+GLuint bg_texture[TEXTURE_NUM];
 
 /*
  * @brief A general Nui initialization function.  Sets all of the initial parameters.
@@ -45,8 +53,9 @@ void initNui(void)	        // We call this right after Nui functions called.
 	if(FAILED(hr)) printf("Cannot connect with kinect0.\r\n");
 
 	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+	hNextDepthFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 
-	hr = pNuiSensor->NuiInitialize(NUI_INITIALIZE_FLAG_USES_COLOR);
+	hr = pNuiSensor->NuiInitialize(NUI_INITIALIZE_FLAG_USES_DEPTH_AND_PLAYER_INDEX | NUI_INITIALIZE_FLAG_USES_COLOR);
 	if(FAILED(hr)) printf("Cannot initialize kinect.\r\n");
 
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -59,9 +68,20 @@ void initNui(void)	        // We call this right after Nui functions called.
 	if(FAILED(hr)){
 		printf("Cannot open image stream\r\n");
 	}
+
+	hr = pNuiSensor->NuiImageStreamOpen(
+		NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX,
+		NUI_IMAGE_RESOLUTION_320x240,
+		0,
+		2,
+		hNextDepthFrameEvent,
+		&pDepthStreamHandle );
+	if(FAILED(hr)){
+		printf("Cannot open depth stream\r\n");
+	}
 }
 
-void storeNuiData(void)
+void storeNuiImage(void)
 {
 	NUI_IMAGE_FRAME imageFrame;
 
@@ -99,7 +119,7 @@ void storeNuiData(void)
 			p++;
 		}
 
-		glBindTexture(GL_TEXTURE_2D, bg_texture[0]);
+		glBindTexture(GL_TEXTURE_2D, bg_texture[IMAGE_TEXTURE]);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 			pDesc.Width,  pDesc.Height,
@@ -112,7 +132,53 @@ void storeNuiData(void)
 	pNuiSensor->NuiImageStreamReleaseFrame( pVideoStreamHandle, &imageFrame );
 }
 
-void drawNuiColorImage(void)
+void storeNuiDepth(void)
+{
+	NUI_IMAGE_FRAME depthFrame;
+
+	HRESULT hr = pNuiSensor->NuiImageStreamGetNextFrame(
+		pDepthStreamHandle,
+		0,
+		&depthFrame );
+	if( FAILED( hr ) ){
+		return;
+	}
+	if(depthFrame.eImageType != NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX)
+		printf("Depth type is not match with the depth and players\r\n");
+
+	INuiFrameTexture *pTexture = depthFrame.pFrameTexture;
+	NUI_LOCKED_RECT LockedRect;
+	pTexture->LockRect( 0, &LockedRect, NULL, 0 );
+	if( LockedRect.Pitch != 0 ){
+		unsigned short *pBuffer = (unsigned short *)LockedRect.pBits;
+		//memcpy(depth, LockedRect.pBits, pTexture->BufferLen());
+
+		NUI_SURFACE_DESC pDesc;
+		pTexture->GetLevelDesc(0, &pDesc);
+		//printf("w: %d, h: %d, byte/pixel: %d\r\n", pDesc.Width, pDesc.Height, LockedRect.Pitch/pDesc.Width);
+		///printf("%d\r\n", pTexture->BufferLen());
+
+		unsigned short *p = (unsigned short *)pBuffer;
+		for(int i=0;i<pTexture->BufferLen()/2;i++){
+			//*p = (unsigned short)((*p & 0xff00)>>8) | ((*p & 0x00ff)<<8);
+			*p = (unsigned short)((*p & 0xfff8)>>3);
+			p++;
+		}
+		glBindTexture(GL_TEXTURE_2D, bg_texture[DEPTH_TEXTURE]);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE,
+			pDesc.Width,  pDesc.Height,
+			0, GL_LUMINANCE, GL_UNSIGNED_SHORT, pBuffer);
+		pTexture->UnlockRect(0);
+	}
+	else{
+		OutputDebugString( L"Buffer length of received texture is bogus\r\n" );
+	}
+	pNuiSensor->NuiImageStreamReleaseFrame( pDepthStreamHandle, &depthFrame );
+
+}
+
+void drawTexture(TEXTURE_INDEX index)
 {
 	const short vertices[] = {
 		0,	  0,
@@ -133,8 +199,11 @@ void drawNuiColorImage(void)
 	glVertexPointer(2, GL_SHORT, 0, vertices);
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	glTexCoordPointer(2, GL_FLOAT, 0, texCoords);
-	glBindTexture(GL_TEXTURE_2D, bg_texture[0]);
+
+	glBindTexture(GL_TEXTURE_2D, bg_texture[index]);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 	glDisableClientState(GL_VERTEX_ARRAY);
 	glDisable(GL_TEXTURE_2D);
@@ -156,13 +225,15 @@ void initGL(int Width, int Height)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	glGenTextures(1, &bg_texture[0]);
-	glBindTexture(GL_TEXTURE_2D, bg_texture[0]);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	for(int i=0;i<TEXTURE_NUM;i++){
+		glGenTextures(1, &bg_texture[i]);
+		glBindTexture(GL_TEXTURE_2D, bg_texture[i]);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	}
 }
 
 /*
@@ -170,10 +241,15 @@ void initGL(int Width, int Height)
  */
 void deinitialize(void)
 {
-	glDeleteTextures(1, &bg_texture[0]);
+	for(int i=0;i<TEXTURE_NUM;i++){
+		glDeleteTextures(1, &bg_texture[i]);
+	}
 
 	CloseHandle( hNextColorFrameEvent );
 	hNextColorFrameEvent = NULL;
+
+	CloseHandle( hNextDepthFrameEvent );
+	hNextDepthFrameEvent = NULL;
 
 	pNuiSensor->NuiShutdown();
 	pNuiSensor->Release();
@@ -232,7 +308,8 @@ void drawGL()
 
 	glClear(GL_COLOR_BUFFER_BIT);
 	
-	drawNuiColorImage();
+	drawTexture(DEPTH_TEXTURE);
+	//drawTexture(IMAGE_TEXTURE);
 
 	glFlush ();					// Flush The GL Rendering Pipeline
 	glutSwapBuffers();			// swap buffers to display, since we're double buffered.
@@ -240,8 +317,18 @@ void drawGL()
 
 void idleGL()
 {
-	if(WaitForSingleObject(hNextColorFrameEvent, 0) == WAIT_TIMEOUT) return;
-	storeNuiData();
+	HANDLE hEvents[2] = { hNextDepthFrameEvent, hNextColorFrameEvent};
+
+	switch(WaitForMultipleObjects( 2, hEvents, FALSE, 0 )){
+		case WAIT_TIMEOUT:
+			return;
+		case WAIT_OBJECT_0 + 0:
+			storeNuiDepth();
+			break;
+		case WAIT_OBJECT_0 + 1:
+			storeNuiImage();
+			break;
+	}
 	glutPostRedisplay();
 }
 
