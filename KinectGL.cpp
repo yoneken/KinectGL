@@ -42,7 +42,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 	HRESULT hr;
 
 	hr = NuiCreateSensorByIndex(0, &pNuiSensor);
-	if(FAILED(hr)) printf("Cannot connect a kinect0.\r\n");
+	if(FAILED(hr)) printf("Cannot connect with kinect0.\r\n");
 
 	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 
@@ -183,7 +183,7 @@ void deinitialize(void)
 /*
  * @brief The function called when our window is resized (which shouldn't happen, because we're fullscreen)
  */
-void reSizeGLScene(int Width, int Height)
+void reSizeGL(int Width, int Height)
 {
 	if (Height==0)						// Prevent A Divide By Zero If The Window Is Too Small
 		Height=1;
@@ -222,7 +222,7 @@ void SpecialKeyPressed(int key, int x, int y)
 /*
  * @brief The main drawing function.
  */
-void drawGLScene()
+void drawGL()
 {
 	time=glutGet(GLUT_ELAPSED_TIME);
 	int milliseconds = time - timeprev;
@@ -232,9 +232,6 @@ void drawGLScene()
 
 	glClear(GL_COLOR_BUFFER_BIT);
 	
-	WaitForSingleObject(hNextColorFrameEvent, 100);
-
-	storeNuiData();
 	drawNuiColorImage();
 
 	glFlush ();					// Flush The GL Rendering Pipeline
@@ -243,7 +240,9 @@ void drawGLScene()
 
 void idleGL()
 {
+	if(WaitForSingleObject(hNextColorFrameEvent, 0) == WAIT_TIMEOUT) return;
 	storeNuiData();
+	glutPostRedisplay();
 }
 
 int main(int argc , char ** argv) {
@@ -252,34 +251,17 @@ int main(int argc , char ** argv) {
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA | GLUT_DEPTH);
 	glutInitWindowSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
 	glutInitWindowPosition(0, 0);
-	window = glutCreateWindow("Kinect SDK v1.0 with OpenGL");
-	glutReshapeFunc(&reSizeGLScene);
-	//glutIdleFunc(&idleGL);
+	window = glutCreateWindow("Kinect SDK v1.5 with OpenGL");
+	glutReshapeFunc(&reSizeGL);
+	glutDisplayFunc(&drawGL);
+	glutIdleFunc(&idleGL);
 	glutKeyboardFunc(&NormalKeyPressed);
 	glutSpecialFunc(&SpecialKeyPressed);
 
 	initNui();
 	initGL(DEFAULT_WIDTH, DEFAULT_HEIGHT);
 	
-	//glutMainLoop();
-
-	while(1){
-		MSG msg;
-		if(PeekMessage(&msg,NULL,0,0,PM_REMOVE)){
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-		
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		WaitForSingleObject(hNextColorFrameEvent, 100);
-
-		storeNuiData();
-		drawNuiColorImage();
-
-		glFlush ();
-		glutSwapBuffers();
-	}
+	glutMainLoop();
 
 	return 0;
 }
