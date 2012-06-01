@@ -31,6 +31,7 @@ int time,timeprev=0;						// For calculating elapsed time
 INuiSensor *pNuiSensor;
 HANDLE hNextColorFrameEvent;
 HANDLE hNextDepthFrameEvent;
+HANDLE hNextSkeletonEvent;
 HANDLE pVideoStreamHandle;
 HANDLE pDepthStreamHandle;
 
@@ -41,6 +42,10 @@ typedef enum _TEXTURE_INDEX{
 	TEXTURE_NUM,
 } TEXTURE_INDEX;
 GLuint bg_texture[TEXTURE_NUM];
+
+Vector4 skels[NUI_SKELETON_COUNT][NUI_SKELETON_POSITION_COUNT];
+int trackedPlayer = 0;
+unsigned short depth[240][320];
 
 /*
  * @brief A general Nui initialization function.  Sets all of the initial parameters.
@@ -54,9 +59,24 @@ void initNui(void)	        // We call this right after Nui functions called.
 
 	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 	hNextDepthFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+	hNextSkeletonEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 
-	hr = pNuiSensor->NuiInitialize(NUI_INITIALIZE_FLAG_USES_DEPTH_AND_PLAYER_INDEX | NUI_INITIALIZE_FLAG_USES_COLOR);
+	hr = pNuiSensor->NuiInitialize(
+		//NUI_INITIALIZE_FLAG_USES_DEPTH |
+		NUI_INITIALIZE_FLAG_USES_DEPTH_AND_PLAYER_INDEX | 
+		NUI_INITIALIZE_FLAG_USES_SKELETON | 
+		NUI_INITIALIZE_FLAG_USES_COLOR
+		);
 	if(FAILED(hr)) printf("Cannot initialize kinect.\r\n");
+
+	if(HasSkeletalEngine(pNuiSensor)){
+		hr = pNuiSensor->NuiSkeletonTrackingEnable( hNextSkeletonEvent, 
+			//NUI_SKELETON_TRACKING_FLAG_TITLE_SETS_TRACKED_SKELETONS |
+			//NUI_SKELETON_TRACKING_FLAG_ENABLE_SEATED_SUPPORT 
+			0
+			);
+		if(FAILED(hr)) printf("Cannot track skeleton\r\n");
+	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
 		NUI_IMAGE_TYPE_COLOR,
@@ -70,8 +90,19 @@ void initNui(void)	        // We call this right after Nui functions called.
 	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
-		NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX,
+		HasSkeletalEngine(pNuiSensor) ? NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX : NUI_IMAGE_TYPE_DEPTH,
 		NUI_IMAGE_RESOLUTION_320x240,
+		0,
+		2,
+		hNextDepthFrameEvent,
+		&pDepthStreamHandle );
+	if(FAILED(hr)){
+		printf("Cannot open depth and player stream\r\n");
+	}
+/*
+	hr = pNuiSensor->NuiImageStreamOpen(
+		NUI_IMAGE_TYPE_DEPTH,
+		NUI_IMAGE_RESOLUTION_640x480,
 		0,
 		2,
 		hNextDepthFrameEvent,
@@ -79,6 +110,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 	if(FAILED(hr)){
 		printf("Cannot open depth stream\r\n");
 	}
+*/
 }
 
 void storeNuiImage(void)
@@ -151,7 +183,7 @@ void storeNuiDepth(void)
 	pTexture->LockRect( 0, &LockedRect, NULL, 0 );
 	if( LockedRect.Pitch != 0 ){
 		unsigned short *pBuffer = (unsigned short *)LockedRect.pBits;
-		//memcpy(depth, LockedRect.pBits, pTexture->BufferLen());
+		memcpy(depth, LockedRect.pBits, pTexture->BufferLen());
 
 		NUI_SURFACE_DESC pDesc;
 		pTexture->GetLevelDesc(0, &pDesc);
@@ -161,7 +193,8 @@ void storeNuiDepth(void)
 		unsigned short *p = (unsigned short *)pBuffer;
 		for(int i=0;i<pTexture->BufferLen()/2;i++){
 			//*p = (unsigned short)((*p & 0xff00)>>8) | ((*p & 0x00ff)<<8);
-			*p = (unsigned short)((*p & 0xfff8)>>3);
+			//*p = (unsigned short)((*p & 0xfff8)>>3);
+			*p = (unsigned short)(NuiDepthPixelToDepth(*p));
 			p++;
 		}
 		glBindTexture(GL_TEXTURE_2D, bg_texture[DEPTH_TEXTURE]);
@@ -176,6 +209,41 @@ void storeNuiDepth(void)
 	}
 	pNuiSensor->NuiImageStreamReleaseFrame( pDepthStreamHandle, &depthFrame );
 
+}
+
+void storeNuiSkeleton(void)
+{
+	NUI_SKELETON_FRAME SkeletonFrame = {0};
+
+	HRESULT hr = pNuiSensor->NuiSkeletonGetNextFrame( 0, &SkeletonFrame );
+
+	bool bFoundSkeleton = true;
+	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ ){
+		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED) ||
+			(SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_POSITION_ONLY) ){
+			bFoundSkeleton = true;
+			trackedPlayer = i;
+		}
+	}
+	OutputDebugString( L"Skel1\r\n" );
+
+	// no skeletons!
+	//
+	if( !bFoundSkeleton )
+		return;
+
+	// smooth out the skeleton data
+	pNuiSensor->NuiTransformSmooth(&SkeletonFrame,NULL);
+
+	// store each skeleton color according to the slot within they are found.
+	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ )
+	{
+		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED) ||
+			(SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_POSITION_ONLY) ){
+			memcpy(skels[i], SkeletonFrame.SkeletonData[i].SkeletonPositions, sizeof(Vector4)*NUI_SKELETON_POSITION_COUNT);
+		}
+	}
+	OutputDebugString( L"Skel\r\n" );
 }
 
 void drawTexture(TEXTURE_INDEX index)
@@ -207,6 +275,60 @@ void drawTexture(TEXTURE_INDEX index)
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 	glDisableClientState(GL_VERTEX_ARRAY);
 	glDisable(GL_TEXTURE_2D);
+}
+
+inline void drawNuiSkeleton(int playerID)
+{
+	int scaleX = DEFAULT_WIDTH;
+	int scaleY = DEFAULT_HEIGHT;
+	float fx=0,fy=0;
+	int display_pos[NUI_SKELETON_POSITION_COUNT][2];
+
+	for (int i = 0; i < NUI_SKELETON_POSITION_COUNT; i++)
+	{
+		//NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy, NUI_IMAGE_RESOLUTION_640x480 );
+		NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy);
+		display_pos[i][0] = (int) ( fx * scaleX + 0.5f );
+		display_pos[i][1] = (int) ( fy * scaleY + 0.5f );
+	}
+	OutputDebugString( L"draw skeleton\r\n" );
+
+	glColor3ub(255, 255, 0);
+	glLineWidth(6);
+	glBegin(GL_LINE_STRIP);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SPINE][0], scaleY - display_pos[NUI_SKELETON_POSITION_SPINE][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HEAD][0], scaleY - display_pos[NUI_SKELETON_POSITION_HEAD][1]);
+	glEnd();
+	glBegin(GL_LINE_STRIP);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SHOULDER_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_SHOULDER_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_ELBOW_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_ELBOW_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_WRIST_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_WRIST_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HAND_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_HAND_LEFT][1]);
+	glEnd();
+	glBegin(GL_LINE_STRIP);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_SHOULDER_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_SHOULDER_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_SHOULDER_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_ELBOW_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_ELBOW_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_WRIST_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_WRIST_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HAND_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_HAND_RIGHT][1]);
+	glEnd();
+	glBegin(GL_LINE_STRIP);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HIP_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_HIP_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_KNEE_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_KNEE_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_ANKLE_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_ANKLE_LEFT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_FOOT_LEFT][0], scaleY - display_pos[NUI_SKELETON_POSITION_FOOT_LEFT][1]);
+	glEnd();
+	glBegin(GL_LINE_STRIP);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][0], scaleY - display_pos[NUI_SKELETON_POSITION_HIP_CENTER][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_HIP_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_HIP_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_KNEE_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_KNEE_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_ANKLE_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_ANKLE_RIGHT][1]);
+		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_FOOT_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_FOOT_RIGHT][1]);
+	glEnd();
 }
 
 /*
@@ -250,6 +372,8 @@ void deinitialize(void)
 
 	CloseHandle( hNextDepthFrameEvent );
 	hNextDepthFrameEvent = NULL;
+
+	if(HasSkeletalEngine(pNuiSensor)) pNuiSensor->NuiSkeletonTrackingDisable();
 
 	pNuiSensor->NuiShutdown();
 	pNuiSensor->Release();
@@ -306,10 +430,11 @@ void drawGL()
 
 	float dt = milliseconds / 1000.0f;						// Convert Milliseconds To Seconds
 
-	glClear(GL_COLOR_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	
 	drawTexture(DEPTH_TEXTURE);
 	//drawTexture(IMAGE_TEXTURE);
+	//drawNuiSkeleton(trackedPlayer);
 
 	glFlush ();					// Flush The GL Rendering Pipeline
 	glutSwapBuffers();			// swap buffers to display, since we're double buffered.
@@ -317,9 +442,10 @@ void drawGL()
 
 void idleGL()
 {
-	HANDLE hEvents[2] = { hNextDepthFrameEvent, hNextColorFrameEvent};
+	const int EventNum = 3;
+	HANDLE hEvents[EventNum] = { hNextDepthFrameEvent, hNextColorFrameEvent, hNextSkeletonEvent};
 
-	switch(WaitForMultipleObjects( 2, hEvents, FALSE, 0 )){
+	switch(WaitForMultipleObjects( EventNum, hEvents, FALSE, 0 )){
 		case WAIT_TIMEOUT:
 			return;
 		case WAIT_OBJECT_0 + 0:
@@ -327,6 +453,9 @@ void idleGL()
 			break;
 		case WAIT_OBJECT_0 + 1:
 			storeNuiImage();
+			break;
+		case WAIT_OBJECT_0 + 2:
+			storeNuiSkeleton();
 			break;
 	}
 	glutPostRedisplay();
