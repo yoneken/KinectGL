@@ -88,7 +88,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 
 	hr = pNuiSensor->NuiImageStreamOpen(
 		NUI_IMAGE_TYPE_COLOR,
-		NUI_IMAGE_RESOLUTION_320x240,	// Note: If 640x320, the skeleton event won't come so frequently.
+		NUI_IMAGE_RESOLUTION_640x480,	// Note: If 640x320, the skeleton event won't come so frequently.
 		0,
 		2,
 		hNextColorFrameEvent,
@@ -227,8 +227,7 @@ void storeNuiSkeleton(void)
 
 	bool bFoundSkeleton = true;
 	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ ){
-		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED) ||
-			(SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_POSITION_ONLY) ){
+		if( SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED ){
 			bFoundSkeleton = true;
 			trackedPlayer = i;
 		}
@@ -289,13 +288,21 @@ inline void drawNuiSkeleton(int playerID)
 	long x=0,y=0;
 	unsigned short depth=0;
 	float fx=0,fy=0;
+	long cx=0,cy=0;
 	int display_pos[NUI_SKELETON_POSITION_COUNT][2];
 
 	for (int i = 0; i < NUI_SKELETON_POSITION_COUNT; i++)
 	{
-		NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy);
-		display_pos[i][0] = (int) ( fx / 320.0 * DEFAULT_WIDTH);
-		display_pos[i][1] = (int) ( fy / 240.0 * DEFAULT_HEIGHT);
+		// Overlay on depth image
+		//NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy);
+		//display_pos[i][0] = (int) ( fx / 320.0 * DEFAULT_WIDTH);
+		//display_pos[i][1] = (int) ( fy / 240.0 * DEFAULT_HEIGHT);
+
+		// Overlay on color image
+		NuiTransformSkeletonToDepthImage( skels[playerID][i], &x, &y, &depth);
+		NuiImageGetColorPixelCoordinatesFromDepthPixel(NUI_IMAGE_RESOLUTION_640x480, NULL, x, y, depth, &cx, &cy);
+		display_pos[i][0] = (int) cx;
+		display_pos[i][1] = (int) cy;
 	}
 
 	glColor3ub(255, 255, 0);
@@ -438,8 +445,8 @@ void drawGL()
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	
-	drawTexture(DEPTH_TEXTURE);
-	//drawTexture(IMAGE_TEXTURE);
+	//drawTexture(DEPTH_TEXTURE);
+	drawTexture(IMAGE_TEXTURE);
 	drawNuiSkeleton(trackedPlayer);
 
 	glFlush ();					// Flush The GL Rendering Pipeline
@@ -448,22 +455,9 @@ void drawGL()
 
 void idleGL()
 {
-	const int EventNum = 3;
-	HANDLE hEvents[EventNum] = { hNextDepthFrameEvent, hNextColorFrameEvent, hNextSkeletonEvent};
-
-	switch(WaitForMultipleObjects( EventNum, hEvents, FALSE, 0 )){
-		case WAIT_TIMEOUT:
-			return;
-		case WAIT_OBJECT_0 + 0:
-			storeNuiDepth();
-			break;
-		case WAIT_OBJECT_0 + 1:
-			storeNuiImage();
-			break;
-		case WAIT_OBJECT_0 + 2:
-			storeNuiSkeleton();
-			break;
-	}
+	if(WAIT_OBJECT_0 == WaitForSingleObject(hNextDepthFrameEvent, 0)) storeNuiDepth();
+	if(WAIT_OBJECT_0 == WaitForSingleObject(hNextColorFrameEvent, 0)) storeNuiImage();
+	if(WAIT_OBJECT_0 == WaitForSingleObject(hNextSkeletonEvent, 0)) storeNuiSkeleton();
 	glutPostRedisplay();
 }
 
