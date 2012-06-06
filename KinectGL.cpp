@@ -55,19 +55,27 @@ void initNui(void)	        // We call this right after Nui functions called.
 	HRESULT hr;
 
 	hr = NuiCreateSensorByIndex(0, &pNuiSensor);
-	if(FAILED(hr)) printf("Cannot connect with kinect0.\r\n");
-
-	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
-	hNextDepthFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
-	hNextSkeletonEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+	if(FAILED(hr)) OutputDebugString( L"Cannot connect with kinect0.\r\n");
 
 	hr = pNuiSensor->NuiInitialize(
 		//NUI_INITIALIZE_FLAG_USES_DEPTH |
 		NUI_INITIALIZE_FLAG_USES_DEPTH_AND_PLAYER_INDEX | 
-		NUI_INITIALIZE_FLAG_USES_SKELETON | 
-		NUI_INITIALIZE_FLAG_USES_COLOR
+		NUI_INITIALIZE_FLAG_USES_COLOR | 
+		NUI_INITIALIZE_FLAG_USES_SKELETON
 		);
-	if(FAILED(hr)) printf("Cannot initialize kinect.\r\n");
+	if ( E_NUI_SKELETAL_ENGINE_BUSY == hr ){
+		hr = pNuiSensor->NuiInitialize(
+			NUI_INITIALIZE_FLAG_USES_DEPTH |
+			NUI_INITIALIZE_FLAG_USES_COLOR
+			);
+	}
+	if(FAILED(hr)){
+		OutputDebugString( L"Cannot initialize kinect.\r\n");
+	}
+
+	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+	hNextDepthFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+	hNextSkeletonEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
 
 	if(HasSkeletalEngine(pNuiSensor)){
 		hr = pNuiSensor->NuiSkeletonTrackingEnable( hNextSkeletonEvent, 
@@ -75,18 +83,18 @@ void initNui(void)	        // We call this right after Nui functions called.
 			//NUI_SKELETON_TRACKING_FLAG_ENABLE_SEATED_SUPPORT 
 			0
 			);
-		if(FAILED(hr)) printf("Cannot track skeleton\r\n");
+		if(FAILED(hr)) OutputDebugString( L"Cannot track skeletons\r\n");
 	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
 		NUI_IMAGE_TYPE_COLOR,
-		NUI_IMAGE_RESOLUTION_640x480,
+		NUI_IMAGE_RESOLUTION_320x240,	// Note: If 640x320, the skeleton event won't come so frequently.
 		0,
 		2,
 		hNextColorFrameEvent,
 		&pVideoStreamHandle );
 	if(FAILED(hr)){
-		printf("Cannot open image stream\r\n");
+		OutputDebugString( L"Cannot open image stream\r\n" );
 	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -97,7 +105,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 		hNextDepthFrameEvent,
 		&pDepthStreamHandle );
 	if(FAILED(hr)){
-		printf("Cannot open depth and player stream\r\n");
+		OutputDebugString( L"Cannot open depth and player stream\r\n" );
 	}
 /*
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -125,7 +133,7 @@ void storeNuiImage(void)
 		return;
 	}
 	if(imageFrame.eImageType != NUI_IMAGE_TYPE_COLOR)
-		printf("Image type is not match with the color\r\n");
+		OutputDebugString( L"Image type is not match with the color\r\n" );
 
 	INuiFrameTexture *pTexture = imageFrame.pFrameTexture;
 	NUI_LOCKED_RECT LockedRect;
@@ -176,7 +184,7 @@ void storeNuiDepth(void)
 		return;
 	}
 	if(depthFrame.eImageType != NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX)
-		printf("Depth type is not match with the depth and players\r\n");
+		OutputDebugString( L"Depth type is not match with the depth and players\r\n" );
 
 	INuiFrameTexture *pTexture = depthFrame.pFrameTexture;
 	NUI_LOCKED_RECT LockedRect;
@@ -225,7 +233,6 @@ void storeNuiSkeleton(void)
 			trackedPlayer = i;
 		}
 	}
-	OutputDebugString( L"Skel1\r\n" );
 
 	// no skeletons!
 	//
@@ -238,12 +245,10 @@ void storeNuiSkeleton(void)
 	// store each skeleton color according to the slot within they are found.
 	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ )
 	{
-		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED) ||
-			(SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_POSITION_ONLY) ){
+		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED)){
 			memcpy(skels[i], SkeletonFrame.SkeletonData[i].SkeletonPositions, sizeof(Vector4)*NUI_SKELETON_POSITION_COUNT);
 		}
 	}
-	OutputDebugString( L"Skel\r\n" );
 }
 
 void drawTexture(TEXTURE_INDEX index)
@@ -281,17 +286,17 @@ inline void drawNuiSkeleton(int playerID)
 {
 	int scaleX = DEFAULT_WIDTH;
 	int scaleY = DEFAULT_HEIGHT;
+	long x=0,y=0;
+	unsigned short depth=0;
 	float fx=0,fy=0;
 	int display_pos[NUI_SKELETON_POSITION_COUNT][2];
 
 	for (int i = 0; i < NUI_SKELETON_POSITION_COUNT; i++)
 	{
-		//NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy, NUI_IMAGE_RESOLUTION_640x480 );
 		NuiTransformSkeletonToDepthImage( skels[playerID][i], &fx, &fy);
-		display_pos[i][0] = (int) ( fx * scaleX + 0.5f );
-		display_pos[i][1] = (int) ( fy * scaleY + 0.5f );
+		display_pos[i][0] = (int) ( fx / 320.0 * DEFAULT_WIDTH);
+		display_pos[i][1] = (int) ( fy / 240.0 * DEFAULT_HEIGHT);
 	}
-	OutputDebugString( L"draw skeleton\r\n" );
 
 	glColor3ub(255, 255, 0);
 	glLineWidth(6);
@@ -329,6 +334,7 @@ inline void drawNuiSkeleton(int playerID)
 		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_ANKLE_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_ANKLE_RIGHT][1]);
 		glVertex2i( scaleX - display_pos[NUI_SKELETON_POSITION_FOOT_RIGHT][0], scaleY - display_pos[NUI_SKELETON_POSITION_FOOT_RIGHT][1]);
 	glEnd();
+	glColor3ub(0, 0, 0);
 }
 
 /*
@@ -434,7 +440,7 @@ void drawGL()
 	
 	drawTexture(DEPTH_TEXTURE);
 	//drawTexture(IMAGE_TEXTURE);
-	//drawNuiSkeleton(trackedPlayer);
+	drawNuiSkeleton(trackedPlayer);
 
 	glFlush ();					// Flush The GL Rendering Pipeline
 	glutSwapBuffers();			// swap buffers to display, since we're double buffered.
