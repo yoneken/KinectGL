@@ -88,7 +88,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 
 	hr = pNuiSensor->NuiImageStreamOpen(
 		NUI_IMAGE_TYPE_COLOR,
-		NUI_IMAGE_RESOLUTION_640x480,	// Note: If 640x320, the skeleton event won't come so frequently.
+		NUI_IMAGE_RESOLUTION_640x480,
 		0,
 		2,
 		hNextColorFrameEvent,
@@ -196,7 +196,6 @@ void storeNuiDepth(void)
 		NUI_SURFACE_DESC pDesc;
 		pTexture->GetLevelDesc(0, &pDesc);
 		//printf("w: %d, h: %d, byte/pixel: %d\r\n", pDesc.Width, pDesc.Height, LockedRect.Pitch/pDesc.Width);
-		///printf("%d\r\n", pTexture->BufferLen());
 
 		unsigned short *p = (unsigned short *)pBuffer;
 		for(int i=0;i<pTexture->BufferLen()/2;i++){
@@ -234,7 +233,6 @@ void storeNuiSkeleton(void)
 	}
 
 	// no skeletons!
-	//
 	if( !bFoundSkeleton )
 		return;
 
@@ -386,6 +384,8 @@ void deinitialize(void)
 	CloseHandle( hNextDepthFrameEvent );
 	hNextDepthFrameEvent = NULL;
 
+	CloseHandle( hNextSkeletonEvent );
+	hNextSkeletonEvent = NULL;
 	if(HasSkeletalEngine(pNuiSensor)) pNuiSensor->NuiSkeletonTrackingDisable();
 
 	pNuiSensor->NuiShutdown();
