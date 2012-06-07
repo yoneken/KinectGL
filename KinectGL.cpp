@@ -478,13 +478,13 @@ void drawSoundSource(int playerID)
 {
 	const float allowErrAngle = 0.1;
 	const int JointsNum = 5;
-	int searchJointArray[JointsNum] = {NUI_SKELETON_POSITION_HEAD,NUI_SKELETON_POSITION_WRIST_RIGHT,NUI_SKELETON_POSITION_WRIST_LEFT,NUI_SKELETON_POSITION_FOOT_RIGHT,NUI_SKELETON_POSITION_FOOT_LEFT};
+	int searchJointArray[JointsNum] = {NUI_SKELETON_POSITION_HEAD,NUI_SKELETON_POSITION_HAND_RIGHT,NUI_SKELETON_POSITION_HAND_LEFT,NUI_SKELETON_POSITION_FOOT_RIGHT,NUI_SKELETON_POSITION_FOOT_LEFT};
 	float skelAngles[JointsNum];
 	float mostNearAngle = 3.14;
 	int mostNearJoint;
 	static long cx=0,cy=0;
 
-	//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
+	//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
 	//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
 
 	for(int i=0;i<5;i++){
