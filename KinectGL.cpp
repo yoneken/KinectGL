@@ -5,7 +5,7 @@
  *  Author: yoneken
  */
 
-// Note: System will down, if you enable audio localization and face tracking at once.
+// Note: May system will down, if you enable audio localization and face tracking at once.
 #define USE_AUDIO
 //#define USE_FACETRACKER
 
@@ -68,9 +68,12 @@ int trackedPlayer = 0;
 unsigned short depth[240][320];
 
 #if defined(USE_AUDIO)
+const int AudioSamplesPerEnergySample = 40;
 INuiAudioBeam* pNuiAudioSource = NULL;
 IMediaObject* pDMO = NULL;
 IPropertyStore* pPropertyStore = NULL;
+float accumulatedSquareSum = 0.0f;
+int accumulatedSampleCount = 0;
 double beamAngle, sourceAngle, sourceConfidence;
 
 class CStaticMediaBuffer : public IMediaBuffer
@@ -190,10 +193,31 @@ void storeNuiAudio(void)
 		unsigned long cbProduced = 0;
 		captureBuffer.GetBufferAndLength(&pProduced, &cbProduced);
 
+		float maxVolume = 0.0f;
 		if (cbProduced > 0){
+			for (unsigned int i = 0; i < cbProduced; i += 2){
+				short audioSample = static_cast<short>(pProduced[i] | (pProduced[i+1] << 8));
+				accumulatedSquareSum += audioSample * audioSample;
+				++accumulatedSampleCount;
+				if (accumulatedSampleCount < AudioSamplesPerEnergySample) continue;
+
+				float meanSquare = accumulatedSquareSum / AudioSamplesPerEnergySample;
+				float amplitude = log(meanSquare) / log(static_cast<float>(INT_MAX));
+
+				if(amplitude > maxVolume) maxVolume = amplitude;
+
+				accumulatedSquareSum = 0;
+				accumulatedSampleCount = 0;
+			}
+		}
+
+		if(maxVolume > 0.7){
+			//printf("%.2f\r\n", maxVolume);
 			pNuiAudioSource->GetBeam(&beamAngle);
 			pNuiAudioSource->GetPosition(&sourceAngle, &sourceConfidence);
-			//printf("%.2f\t%.1f\t", sourceAngle, sourceConfidence);
+			printf("%.2f\t%.1f\t", sourceAngle, sourceConfidence);
+		}else{
+			sourceConfidence = 0.0;
 		}
 	}
 }
@@ -208,24 +232,26 @@ void drawSoundSource(int playerID)
 	int mostNearJoint;
 	static long cx=0,cy=0;
 
-	//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
-	//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
+	if(sourceConfidence < 0.5){
+		//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
+		//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
 
-	for(int i=0;i<5;i++){
-		skelAngles[i] = atan2f(skels[playerID][searchJointArray[i]].x, skels[playerID][searchJointArray[i]].z);
-		float subAngle = abs(sourceAngle - skelAngles[i]);
-		if(mostNearAngle > subAngle){
-			mostNearAngle = subAngle;
-			mostNearJoint = i;
+		for(int i=0;i<5;i++){
+			skelAngles[i] = atan2f(skels[playerID][searchJointArray[i]].x, skels[playerID][searchJointArray[i]].z);
+			float subAngle = abs(sourceAngle - skelAngles[i]);
+			if(mostNearAngle > subAngle){
+				mostNearAngle = subAngle;
+				mostNearJoint = i;
+			}
 		}
-	}
 
-	if(mostNearAngle < allowErrAngle){
-		long x=0,y=0;
-		unsigned short depth=0;
+		if(mostNearAngle < allowErrAngle){
+			long x=0,y=0;
+			unsigned short depth=0;
 
-		NuiTransformSkeletonToDepthImage( skels[playerID][searchJointArray[mostNearJoint]], &x, &y, &depth);
-		NuiImageGetColorPixelCoordinatesFromDepthPixel(NUI_IMAGE_RESOLUTION_640x480, NULL, x, y, depth, &cx, &cy);
+			NuiTransformSkeletonToDepthImage( skels[playerID][searchJointArray[mostNearJoint]], &x, &y, &depth);
+			NuiImageGetColorPixelCoordinatesFromDepthPixel(NUI_IMAGE_RESOLUTION_640x480, NULL, x, y, depth, &cx, &cy);
+		}
 	}
 
 	// draw a square;
