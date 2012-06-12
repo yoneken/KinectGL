@@ -215,7 +215,7 @@ void storeNuiAudio(void)
 			//printf("%.2f\r\n", maxVolume);
 			pNuiAudioSource->GetBeam(&beamAngle);
 			pNuiAudioSource->GetPosition(&sourceAngle, &sourceConfidence);
-			printf("%.2f\t%.1f\t", sourceAngle, sourceConfidence);
+			//printf("%.2f\t%.1f\r\n", sourceAngle, sourceConfidence);
 		}else{
 			sourceConfidence = 0.0;
 		}
@@ -232,7 +232,7 @@ void drawSoundSource(int playerID)
 	int mostNearJoint;
 	static long cx=0,cy=0;
 
-	if(sourceConfidence < 0.5){
+	if(sourceConfidence > 0.3){
 		//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
 		//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
 
