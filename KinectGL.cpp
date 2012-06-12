@@ -5,6 +5,9 @@
  *  Author: yoneken
  */
 
+// Note: System will down, if you enable audio localization and face tracking at once.
+#define USE_AUDIO
+//#define USE_FACETRACKER
 
 #if defined(WIN32)
 #include <GL/glut.h>    			// Header File For The GLUT Library
@@ -14,18 +17,28 @@
 #include <GLUT/glut.h>
 #endif /* OS */
 
-#include <dmo.h>		// for IMediaBuffer
-#include <propsys.h>	// for IPropertyStore
-#include <mmreg.h>		// for WAVEFORMATEX
-#include <uuids.h>		// for FORMAT_WaveFormatEx
-#include <wmcodecdsp.h>	// for MFPKEY_WMAAECMA_SYSTEM_MODE
-
+#pragma comment(lib, "Kinect10.lib")
 #include <ole2.h>
 #include <NuiApi.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#if defined(USE_AUDIO)
+#pragma comment(lib, "Msdmo.lib")
+#pragma comment(lib, "dmoguids.lib")
+#pragma comment(lib, "amstrmid.lib")
+#include <dmo.h>		// for IMediaBuffer
+#include <propsys.h>	// for IPropertyStore
+#include <mmreg.h>		// for WAVEFORMATEX
+#include <uuids.h>		// for FORMAT_WaveFormatEx
+#include <wmcodecdsp.h>	// for MFPKEY_WMAAECMA_SYSTEM_MODE
+#endif
+#if defined(USE_FACETRACKER)
+#pragma comment(lib, "FaceTrackLib.lib")
+#include <FaceTrackLib.h>
+#endif
 
 /* ASCII code for the escape key. */
 #define KEY_ESCAPE 27
@@ -42,11 +55,6 @@ HANDLE hNextSkeletonEvent;
 HANDLE pVideoStreamHandle;
 HANDLE pDepthStreamHandle;
 
-INuiAudioBeam* pNuiAudioSource = NULL;
-IMediaObject* pDMO = NULL;
-IPropertyStore* pPropertyStore = NULL;
-double beamAngle, sourceAngle, sourceConfidence;
-
 typedef enum _TEXTURE_INDEX{
 	IMAGE_TEXTURE = 0,
 	DEPTH_TEXTURE,
@@ -58,6 +66,12 @@ GLuint bg_texture[TEXTURE_NUM];
 Vector4 skels[NUI_SKELETON_COUNT][NUI_SKELETON_POSITION_COUNT];
 int trackedPlayer = 0;
 unsigned short depth[240][320];
+
+#if defined(USE_AUDIO)
+INuiAudioBeam* pNuiAudioSource = NULL;
+IMediaObject* pDMO = NULL;
+IPropertyStore* pPropertyStore = NULL;
+double beamAngle, sourceAngle, sourceConfidence;
 
 class CStaticMediaBuffer : public IMediaBuffer
 {
@@ -111,6 +125,237 @@ protected:
     ULONG m_dataLength;
 };
 CStaticMediaBuffer      captureBuffer;
+
+void initAudio(void)
+{
+	HRESULT hr = pNuiSensor->NuiGetAudioSource(&pNuiAudioSource);
+	if(FAILED(hr)){
+		OutputDebugString( L"Cannot open audio stream.\r\n" );
+	}
+	hr = pNuiAudioSource->QueryInterface(IID_IMediaObject, (void**)&pDMO);
+	if(FAILED(hr)){
+		OutputDebugString( L"Cannot get media object.\r\n" );
+	}
+	hr = pNuiAudioSource->QueryInterface(IID_IPropertyStore, (void**)&pPropertyStore);
+	if(FAILED(hr)){
+		OutputDebugString( L"Cannot get media property.\r\n" );
+	}
+
+	PROPVARIANT pvSysMode;
+	PropVariantInit(&pvSysMode);
+	pvSysMode.vt = VT_I4;
+	pvSysMode.lVal = (LONG)(2);
+	pPropertyStore->SetValue(MFPKEY_WMAAECMA_SYSTEM_MODE, pvSysMode);
+	PropVariantClear(&pvSysMode);
+
+	WAVEFORMATEX wfxOut = {WAVE_FORMAT_PCM, 1, 16000, 32000, 2, 16, 0};
+	DMO_MEDIA_TYPE mt = {0};
+	MoInitMediaType(&mt, sizeof(WAVEFORMATEX));
+    
+	mt.majortype = MEDIATYPE_Audio;
+	mt.subtype = MEDIASUBTYPE_PCM;
+	mt.lSampleSize = 0;
+	mt.bFixedSizeSamples = TRUE;
+	mt.bTemporalCompression = FALSE;
+	mt.formattype = FORMAT_WaveFormatEx;	
+	memcpy(mt.pbFormat, &wfxOut, sizeof(WAVEFORMATEX));
+    
+	hr = pDMO->SetOutputType(0, &mt, 0); 
+	MoFreeMediaType(&mt);
+}
+
+void clearAudio(void)
+{
+	pNuiAudioSource->Release();
+	pNuiAudioSource = NULL;
+	pDMO->Release();
+	pDMO = NULL;
+	pPropertyStore->Release();
+	pPropertyStore = NULL;
+}
+
+void storeNuiAudio(void)
+{
+	HRESULT hr;
+	DWORD dwStatus = 0;
+	DMO_OUTPUT_DATA_BUFFER outputBuffer = {0};
+	outputBuffer.pBuffer = &captureBuffer;
+
+	captureBuffer.Init(0);
+	hr = pDMO->ProcessOutput(0, 1, &outputBuffer, &dwStatus);
+	if(FAILED(hr)) OutputDebugString( L"Failed to process audio output.\r\n");
+
+	if(hr != S_FALSE){
+		unsigned char *pProduced = NULL;
+		unsigned long cbProduced = 0;
+		captureBuffer.GetBufferAndLength(&pProduced, &cbProduced);
+
+		if (cbProduced > 0){
+			pNuiAudioSource->GetBeam(&beamAngle);
+			pNuiAudioSource->GetPosition(&sourceAngle, &sourceConfidence);
+			//printf("%.2f\t%.1f\t", sourceAngle, sourceConfidence);
+		}
+	}
+}
+
+void drawSoundSource(int playerID)
+{
+	const float allowErrAngle = 0.1;
+	const int JointsNum = 5;
+	int searchJointArray[JointsNum] = {NUI_SKELETON_POSITION_HEAD,NUI_SKELETON_POSITION_HAND_RIGHT,NUI_SKELETON_POSITION_HAND_LEFT,NUI_SKELETON_POSITION_FOOT_RIGHT,NUI_SKELETON_POSITION_FOOT_LEFT};
+	float skelAngles[JointsNum];
+	float mostNearAngle = 3.14;
+	int mostNearJoint;
+	static long cx=0,cy=0;
+
+	//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
+	//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
+
+	for(int i=0;i<5;i++){
+		skelAngles[i] = atan2f(skels[playerID][searchJointArray[i]].x, skels[playerID][searchJointArray[i]].z);
+		float subAngle = abs(sourceAngle - skelAngles[i]);
+		if(mostNearAngle > subAngle){
+			mostNearAngle = subAngle;
+			mostNearJoint = i;
+		}
+	}
+
+	if(mostNearAngle < allowErrAngle){
+		long x=0,y=0;
+		unsigned short depth=0;
+
+		NuiTransformSkeletonToDepthImage( skels[playerID][searchJointArray[mostNearJoint]], &x, &y, &depth);
+		NuiImageGetColorPixelCoordinatesFromDepthPixel(NUI_IMAGE_RESOLUTION_640x480, NULL, x, y, depth, &cx, &cy);
+	}
+
+	// draw a square;
+	glColor3ub(255, 0, 0);
+	glLineWidth(3);
+	glBegin(GL_LINE_LOOP);
+		glVertex2i( DEFAULT_WIDTH - cx - 10, DEFAULT_HEIGHT - cy - 10);
+		glVertex2i( DEFAULT_WIDTH - cx - 10, DEFAULT_HEIGHT - cy + 10);
+		glVertex2i( DEFAULT_WIDTH - cx + 10, DEFAULT_HEIGHT - cy + 10);
+		glVertex2i( DEFAULT_WIDTH - cx + 10, DEFAULT_HEIGHT - cy - 10);
+	glEnd();
+	glColor3ub(0, 0, 0);
+}
+#endif
+
+#if defined(USE_FACETRACKER)
+IFTFaceTracker *pFaceTracker;
+IFTResult *pFTResult;
+IFTImage *iftColorImage;
+IFTImage *iftDepthImage;
+bool lastTrackSucceeded;
+float faceScale;
+float faceR[3];
+float faceT[3];
+
+void initFaceTracker(void)
+{
+	HRESULT hr;
+	pFaceTracker = FTCreateFaceTracker(NULL);	// We don't use any options.
+	if(!pFaceTracker){
+		OutputDebugString( L"Could not create the face tracker.\r\n");
+		return;
+	}
+	
+	FT_CAMERA_CONFIG videoConfig;
+	videoConfig.Width = 640;
+	videoConfig.Height = 480;
+	videoConfig.FocalLength = NUI_CAMERA_COLOR_NOMINAL_FOCAL_LENGTH_IN_PIXELS;			// 640x480
+	//videoConfig.FocalLength = NUI_CAMERA_COLOR_NOMINAL_FOCAL_LENGTH_IN_PIXELS * 2.f;	// 1280x960
+
+	FT_CAMERA_CONFIG depthConfig;
+	depthConfig.Width = 320;
+	depthConfig.Height = 240;
+	//depthConfig.FocalLength = NUI_CAMERA_DEPTH_NOMINAL_FOCAL_LENGTH_IN_PIXELS / 4.f;	//  80x 60
+	depthConfig.FocalLength = NUI_CAMERA_DEPTH_NOMINAL_FOCAL_LENGTH_IN_PIXELS;			// 320x240
+	//depthConfig.FocalLength = NUI_CAMERA_DEPTH_NOMINAL_FOCAL_LENGTH_IN_PIXELS * 2.f;	// 640x480
+
+	hr = pFaceTracker->Initialize(&videoConfig, &depthConfig, NULL, NULL);
+	if(!pFaceTracker){
+		OutputDebugString( L"Could not initialize the face tracker.\r\n");
+		return;
+	}
+
+	hr = pFaceTracker->CreateFTResult(&pFTResult);
+	if (FAILED(hr) || !pFTResult)
+	{
+		OutputDebugString( L"Could not initialize the face tracker result.\r\n");
+		return;
+	}
+
+	iftColorImage = FTCreateImage();
+	if (!iftColorImage || FAILED(hr = iftColorImage->Allocate(videoConfig.Width, videoConfig.Height, FTIMAGEFORMAT_UINT8_B8G8R8X8)))
+	{
+		OutputDebugString( L"Could not create the color image.\r\n");
+		return;
+	}
+	iftDepthImage = FTCreateImage();
+	if (!iftDepthImage || FAILED(hr = iftDepthImage->Allocate(320, 240, FTIMAGEFORMAT_UINT16_D13P3)))
+	{
+		OutputDebugString( L"Could not create the depth image.\r\n");
+		return;
+	}
+
+	lastTrackSucceeded = false;
+	faceScale = 0;
+}
+
+void clearFaceTracker(void)
+{
+	pFaceTracker->Release();
+    pFaceTracker = NULL;
+
+    if(iftColorImage)
+    {
+        iftColorImage->Release();
+        iftColorImage = NULL;
+    }
+
+    if(pFTResult)
+    {
+        pFTResult->Release();
+        pFTResult = NULL;
+    }
+}
+
+void storeFace(int playerID)
+{
+	HRESULT hrFT = E_FAIL;
+	FT_SENSOR_DATA sensorData(iftColorImage, iftDepthImage);
+	FT_VECTOR3D hint[2];
+
+	hint[0].x = skels[playerID][NUI_SKELETON_POSITION_HEAD].x;
+	hint[0].y = skels[playerID][NUI_SKELETON_POSITION_HEAD].y;
+	hint[0].z = skels[playerID][NUI_SKELETON_POSITION_HEAD].z;
+	hint[1].x = skels[playerID][NUI_SKELETON_POSITION_SHOULDER_CENTER].x;
+	hint[1].y = skels[playerID][NUI_SKELETON_POSITION_SHOULDER_CENTER].y;
+	hint[1].z = skels[playerID][NUI_SKELETON_POSITION_SHOULDER_CENTER].z;
+
+	if (lastTrackSucceeded)
+	{
+		hrFT = pFaceTracker->ContinueTracking(&sensorData, hint, pFTResult);
+	}
+	else
+	{
+		hrFT = pFaceTracker->StartTracking(&sensorData, NULL, hint, pFTResult);
+	}
+
+	lastTrackSucceeded = SUCCEEDED(hrFT) && SUCCEEDED(pFTResult->GetStatus());
+	if (lastTrackSucceeded)
+	{
+		pFTResult->Get3DPose(&faceScale, faceR, faceT);
+		printf("%3.2f, %3.2f, %3.2f, %3.2f\r\n", faceScale, faceR[0], faceR[1], faceR[2]);
+	}
+	else
+	{
+		pFTResult->Reset();
+	}
+}
+#endif
+
 
 /*
  * @brief A general Nui initialization function.  Sets all of the initial parameters.
@@ -185,42 +430,12 @@ void initNui(void)	        // We call this right after Nui functions called.
 		printf("Cannot open depth stream\r\n");
 	}
 */
-	// for Audio
-	hr = pNuiSensor->NuiGetAudioSource(&pNuiAudioSource);
-	if(FAILED(hr)){
-		OutputDebugString( L"Cannot open audio stream.\r\n" );
-	}
-	hr = pNuiAudioSource->QueryInterface(IID_IMediaObject, (void**)&pDMO);
-	if(FAILED(hr)){
-		OutputDebugString( L"Cannot get media object.\r\n" );
-	}
-	hr = pNuiAudioSource->QueryInterface(IID_IPropertyStore, (void**)&pPropertyStore);
-	if(FAILED(hr)){
-		OutputDebugString( L"Cannot get media property.\r\n" );
-	}
-
-	PROPVARIANT pvSysMode;
-	PropVariantInit(&pvSysMode);
-	pvSysMode.vt = VT_I4;
-	pvSysMode.lVal = (LONG)(2);
-	pPropertyStore->SetValue(MFPKEY_WMAAECMA_SYSTEM_MODE, pvSysMode);
-	PropVariantClear(&pvSysMode);
-
-	WAVEFORMATEX wfxOut = {WAVE_FORMAT_PCM, 1, 16000, 32000, 2, 16, 0};
-	DMO_MEDIA_TYPE mt = {0};
-	MoInitMediaType(&mt, sizeof(WAVEFORMATEX));
-    
-	mt.majortype = MEDIATYPE_Audio;
-	mt.subtype = MEDIASUBTYPE_PCM;
-	mt.lSampleSize = 0;
-	mt.bFixedSizeSamples = TRUE;
-	mt.bTemporalCompression = FALSE;
-	mt.formattype = FORMAT_WaveFormatEx;	
-	memcpy(mt.pbFormat, &wfxOut, sizeof(WAVEFORMATEX));
-    
-	hr = pDMO->SetOutputType(0, &mt, 0); 
-	MoFreeMediaType(&mt);
-
+#if defined(USE_AUDIO)
+	initAudio();
+#endif
+#if defined(USE_FACETRACKER)
+	initFaceTracker();
+#endif
 }
 
 void storeNuiImage(void)
@@ -244,7 +459,9 @@ void storeNuiImage(void)
 	pTexture->LockRect( 0, &LockedRect, NULL, 0 );
 	if( LockedRect.Pitch != 0 ){
 		byte * pBuffer = (byte *)LockedRect.pBits;
-
+#if defined(USE_FACETRACKER)
+		memcpy(iftColorImage->GetBuffer(), LockedRect.pBits, iftColorImage->GetBufferSize());
+#endif
 		NUI_SURFACE_DESC pDesc;
 		pTexture->GetLevelDesc(0, &pDesc);
 		//printf("w: %d, h: %d, byte/pixel: %d\r\n", pDesc.Width, pDesc.Height, LockedRect.Pitch/pDesc.Width);
@@ -298,6 +515,9 @@ void storeNuiDepth(void)
 	if( LockedRect.Pitch != 0 ){
 		unsigned short *pBuffer = (unsigned short *)LockedRect.pBits;
 		memcpy(depth, LockedRect.pBits, pTexture->BufferLen());
+#if defined(USE_FACETRACKER)
+		memcpy(iftDepthImage->GetBuffer(), LockedRect.pBits, iftDepthImage->GetBufferSize());
+#endif
 
 		NUI_SURFACE_DESC pDesc;
 		pTexture->GetLevelDesc(0, &pDesc);
@@ -352,30 +572,6 @@ void storeNuiSkeleton(void)
 	{
 		if( (SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED)){
 			memcpy(skels[i], SkeletonFrame.SkeletonData[i].SkeletonPositions, sizeof(Vector4)*NUI_SKELETON_POSITION_COUNT);
-		}
-	}
-}
-
-void storeNuiAudio(void)
-{
-	HRESULT hr;
-	DWORD dwStatus = 0;
-	DMO_OUTPUT_DATA_BUFFER outputBuffer = {0};
-	outputBuffer.pBuffer = &captureBuffer;
-
-	captureBuffer.Init(0);
-	hr = pDMO->ProcessOutput(0, 1, &outputBuffer, &dwStatus);
-	if(FAILED(hr)) OutputDebugString( L"Failed to process audio output.\r\n");
-
-	if(hr != S_FALSE){
-		unsigned char *pProduced = NULL;
-		unsigned long cbProduced = 0;
-		captureBuffer.GetBufferAndLength(&pProduced, &cbProduced);
-
-		if (cbProduced > 0){
-			pNuiAudioSource->GetBeam(&beamAngle);
-			pNuiAudioSource->GetPosition(&sourceAngle, &sourceConfidence);
-			//printf("%.2f\t%.1f\t", sourceAngle, sourceConfidence);
 		}
 	}
 }
@@ -474,48 +670,6 @@ void drawNuiSkeleton(int playerID)
 	glColor3ub(0, 0, 0);
 }
 
-void drawSoundSource(int playerID)
-{
-	const float allowErrAngle = 0.1;
-	const int JointsNum = 5;
-	int searchJointArray[JointsNum] = {NUI_SKELETON_POSITION_HEAD,NUI_SKELETON_POSITION_HAND_RIGHT,NUI_SKELETON_POSITION_HAND_LEFT,NUI_SKELETON_POSITION_FOOT_RIGHT,NUI_SKELETON_POSITION_FOOT_LEFT};
-	float skelAngles[JointsNum];
-	float mostNearAngle = 3.14;
-	int mostNearJoint;
-	static long cx=0,cy=0;
-
-	//printf("x : %.2f\ty : %.2f\tz : %.2f\r\n", skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_HAND_RIGHT].y, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z);
-	//printf("%.2f\r\n", atan2(skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].x, skels[playerID][NUI_SKELETON_POSITION_WRIST_RIGHT].z));
-
-	for(int i=0;i<5;i++){
-		skelAngles[i] = atan2f(skels[playerID][searchJointArray[i]].x, skels[playerID][searchJointArray[i]].z);
-		float subAngle = abs(sourceAngle - skelAngles[i]);
-		if(mostNearAngle > subAngle){
-			mostNearAngle = subAngle;
-			mostNearJoint = i;
-		}
-	}
-
-	if(mostNearAngle < allowErrAngle){
-		long x=0,y=0;
-		unsigned short depth=0;
-
-		NuiTransformSkeletonToDepthImage( skels[playerID][searchJointArray[mostNearJoint]], &x, &y, &depth);
-		NuiImageGetColorPixelCoordinatesFromDepthPixel(NUI_IMAGE_RESOLUTION_640x480, NULL, x, y, depth, &cx, &cy);
-	}
-
-	// draw a square;
-	glColor3ub(255, 0, 0);
-	glLineWidth(3);
-	glBegin(GL_LINE_LOOP);
-		glVertex2i( DEFAULT_WIDTH - cx - 10, DEFAULT_HEIGHT - cy - 10);
-		glVertex2i( DEFAULT_WIDTH - cx - 10, DEFAULT_HEIGHT - cy + 10);
-		glVertex2i( DEFAULT_WIDTH - cx + 10, DEFAULT_HEIGHT - cy + 10);
-		glVertex2i( DEFAULT_WIDTH - cx + 10, DEFAULT_HEIGHT - cy - 10);
-	glEnd();
-	glColor3ub(0, 0, 0);
-}
-
 /*
  * @brief A general OpenGL initialization function.  Sets all of the initial parameters.
  */
@@ -562,12 +716,12 @@ void deinitialize(void)
 	hNextSkeletonEvent = NULL;
 	if(HasSkeletalEngine(pNuiSensor)) pNuiSensor->NuiSkeletonTrackingDisable();
 
-	pNuiAudioSource->Release();
-	pNuiAudioSource = NULL;
-	pDMO->Release();
-	pDMO = NULL;
-	pPropertyStore->Release();
-	pPropertyStore = NULL;
+#if defined(USE_AUDIO)
+	clearAudio();
+#endif
+#if defined(USE_FACETRACKER)
+	clearFaceTracker();
+#endif
 
 	pNuiSensor->NuiShutdown();
 	pNuiSensor->Release();
@@ -629,7 +783,9 @@ void drawGL()
 	//drawTexture(DEPTH_TEXTURE);
 	drawTexture(IMAGE_TEXTURE);
 	drawNuiSkeleton(trackedPlayer);
+#if defined(USE_AUDIO)
 	drawSoundSource(trackedPlayer);
+#endif
 
 	glFlush ();					// Flush The GL Rendering Pipeline
 	glutSwapBuffers();			// swap buffers to display, since we're double buffered.
@@ -640,7 +796,12 @@ void idleGL()
 	storeNuiDepth();
 	storeNuiImage();
 	storeNuiSkeleton();
+#if defined(USE_AUDIO)
 	storeNuiAudio();
+#endif
+#if defined(USE_FACETRACKER)
+	storeFace(trackedPlayer);
+#endif
 	glutPostRedisplay();
 }
 
