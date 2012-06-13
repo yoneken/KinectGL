@@ -5,9 +5,12 @@
  *  Author: yoneken
  */
 
-// Note: May system will down, if you enable audio localization and face tracking at once.
+// Note: May system will down, if you enable sound localization and face tracking at once.
 #define USE_AUDIO
 //#define USE_FACETRACKER
+
+#define STDERR(str) OutputDebugString(L##str)
+//#define STDERR(str) 
 
 #if defined(WIN32)
 #include <GL/glut.h>    			// Header File For The GLUT Library
@@ -133,15 +136,15 @@ void initAudio(void)
 {
 	HRESULT hr = pNuiSensor->NuiGetAudioSource(&pNuiAudioSource);
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot open audio stream.\r\n" );
+		 STDERR("Cannot open audio stream.\r\n");
 	}
 	hr = pNuiAudioSource->QueryInterface(IID_IMediaObject, (void**)&pDMO);
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot get media object.\r\n" );
+		 STDERR("Cannot get media object.\r\n");
 	}
 	hr = pNuiAudioSource->QueryInterface(IID_IPropertyStore, (void**)&pPropertyStore);
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot get media property.\r\n" );
+		 STDERR("Cannot get media property.\r\n");
 	}
 
 	PROPVARIANT pvSysMode;
@@ -186,7 +189,7 @@ void storeNuiAudio(void)
 
 	captureBuffer.Init(0);
 	hr = pDMO->ProcessOutput(0, 1, &outputBuffer, &dwStatus);
-	if(FAILED(hr)) OutputDebugString( L"Failed to process audio output.\r\n");
+	if(FAILED(hr)) STDERR("Failed to process audio output.\r\n");
 
 	if(hr != S_FALSE){
 		unsigned char *pProduced = NULL;
@@ -282,7 +285,7 @@ void initFaceTracker(void)
 	HRESULT hr;
 	pFaceTracker = FTCreateFaceTracker(NULL);	// We don't use any options.
 	if(!pFaceTracker){
-		OutputDebugString( L"Could not create the face tracker.\r\n");
+		STDERR("Could not create the face tracker.\r\n");
 		return;
 	}
 	
@@ -301,27 +304,27 @@ void initFaceTracker(void)
 
 	hr = pFaceTracker->Initialize(&videoConfig, &depthConfig, NULL, NULL);
 	if(!pFaceTracker){
-		OutputDebugString( L"Could not initialize the face tracker.\r\n");
+		STDERR("Could not initialize the face tracker.\r\n");
 		return;
 	}
 
 	hr = pFaceTracker->CreateFTResult(&pFTResult);
 	if (FAILED(hr) || !pFTResult)
 	{
-		OutputDebugString( L"Could not initialize the face tracker result.\r\n");
+		STDERR("Could not initialize the face tracker result.\r\n");
 		return;
 	}
 
 	iftColorImage = FTCreateImage();
 	if (!iftColorImage || FAILED(hr = iftColorImage->Allocate(videoConfig.Width, videoConfig.Height, FTIMAGEFORMAT_UINT8_B8G8R8X8)))
 	{
-		OutputDebugString( L"Could not create the color image.\r\n");
+		STDERR("Could not create the color image.\r\n");
 		return;
 	}
 	iftDepthImage = FTCreateImage();
 	if (!iftDepthImage || FAILED(hr = iftDepthImage->Allocate(320, 240, FTIMAGEFORMAT_UINT16_D13P3)))
 	{
-		OutputDebugString( L"Could not create the depth image.\r\n");
+		STDERR("Could not create the depth image.\r\n");
 		return;
 	}
 
@@ -391,7 +394,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 	HRESULT hr;
 
 	hr = NuiCreateSensorByIndex(0, &pNuiSensor);
-	if(FAILED(hr)) OutputDebugString( L"Cannot connect with kinect0.\r\n");
+	if(FAILED(hr)) STDERR("Cannot connect with kinect0.\r\n");
 
 	hr = pNuiSensor->NuiInitialize(
 		NUI_INITIALIZE_FLAG_USES_AUDIO |
@@ -407,7 +410,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 			);
 	}
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot initialize kinect.\r\n");
+		STDERR("Cannot initialize kinect.\r\n");
 	}
 
 	hNextColorFrameEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
@@ -420,7 +423,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 			//NUI_SKELETON_TRACKING_FLAG_ENABLE_SEATED_SUPPORT 
 			0
 			);
-		if(FAILED(hr)) OutputDebugString( L"Cannot track skeletons\r\n");
+		if(FAILED(hr)) STDERR("Cannot track skeletons\r\n");
 	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -431,7 +434,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 		hNextColorFrameEvent,
 		&pVideoStreamHandle );
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot open image stream\r\n" );
+		STDERR("Cannot open image stream\r\n");
 	}
 
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -442,7 +445,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 		hNextDepthFrameEvent,
 		&pDepthStreamHandle );
 	if(FAILED(hr)){
-		OutputDebugString( L"Cannot open depth and player stream\r\n" );
+		STDERR("Cannot open depth and player stream\r\n");
 	}
 /*
 	hr = pNuiSensor->NuiImageStreamOpen(
@@ -453,7 +456,7 @@ void initNui(void)	        // We call this right after Nui functions called.
 		hNextDepthFrameEvent,
 		&pDepthStreamHandle );
 	if(FAILED(hr)){
-		printf("Cannot open depth stream\r\n");
+		STDERR("Cannot open depth stream\r\n");
 	}
 */
 #if defined(USE_AUDIO)
@@ -478,7 +481,7 @@ void storeNuiImage(void)
 		return;
 	}
 	if(imageFrame.eImageType != NUI_IMAGE_TYPE_COLOR)
-		OutputDebugString( L"Image type is not match with the color\r\n" );
+		STDERR("Image type is not match with the color\r\n");
 
 	INuiFrameTexture *pTexture = imageFrame.pFrameTexture;
 	NUI_LOCKED_RECT LockedRect;
@@ -513,7 +516,7 @@ void storeNuiImage(void)
 			0, GL_RGBA, GL_UNSIGNED_BYTE, pBuffer);
 		pTexture->UnlockRect(0);
 	}else{
-		OutputDebugString( L"Buffer length of received texture is bogus\r\n" );
+		STDERR("Buffer length of received texture is bogus\r\n");
 	}
 
 	pNuiSensor->NuiImageStreamReleaseFrame( pVideoStreamHandle, &imageFrame );
@@ -533,7 +536,7 @@ void storeNuiDepth(void)
 		return;
 	}
 	if(depthFrame.eImageType != NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX)
-		OutputDebugString( L"Depth type is not match with the depth and players\r\n" );
+		STDERR("Depth type is not match with the depth and players\r\n");
 
 	INuiFrameTexture *pTexture = depthFrame.pFrameTexture;
 	NUI_LOCKED_RECT LockedRect;
@@ -564,15 +567,13 @@ void storeNuiDepth(void)
 		pTexture->UnlockRect(0);
 	}
 	else{
-		OutputDebugString( L"Buffer length of received texture is bogus\r\n" );
+		STDERR("Buffer length of received texture is bogus\r\n");
 	}
 	pNuiSensor->NuiImageStreamReleaseFrame( pDepthStreamHandle, &depthFrame );
-
 }
 
 void storeNuiSkeleton(void)
 {
-
 	if(WAIT_OBJECT_0 != WaitForSingleObject(hNextSkeletonEvent, 0)) return;
 
 	NUI_SKELETON_FRAME SkeletonFrame = {0};
@@ -726,7 +727,7 @@ void initGL(int Width, int Height)
 /*
  * @brief Any User DeInitialization Goes Here
  */
-void deinitialize(void)
+void close(void)
 {
 	for(int i=0;i<TEXTURE_NUM;i++){
 		glDeleteTextures(1, &bg_texture[i]);
@@ -777,7 +778,7 @@ void reSizeGL(int Width, int Height)
 void NormalKeyPressed(unsigned char keys, int x, int y)
 {
 	if (keys == KEY_ESCAPE) {
-		deinitialize();
+		close();
 		exit(0);
 	}
 }
