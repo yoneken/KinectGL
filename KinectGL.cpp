@@ -67,7 +67,8 @@ typedef enum _TEXTURE_INDEX{
 GLuint bg_texture[TEXTURE_NUM];
 
 Vector4 skels[NUI_SKELETON_COUNT][NUI_SKELETON_POSITION_COUNT];
-int trackedPlayer = 0;
+int trackedDataIndex = 0;
+bool tracked = false;
 unsigned short depth[240][320];
 
 #if defined(USE_AUDIO)
@@ -585,10 +586,11 @@ void storeNuiSkeleton(void)
 	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ ){
 		if( SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED ){
 			bFoundSkeleton = true;
-			trackedPlayer = i;
+			trackedDataIndex = i;
 		}
 	}
 
+	tracked = bFoundSkeleton;
 	// no skeletons!
 	if( !bFoundSkeleton )
 		return;
@@ -809,11 +811,11 @@ void drawGL()
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	
-	drawTexture(DEPTH_TEXTURE);
-	//drawTexture(IMAGE_TEXTURE);
-	drawNuiSkeleton(trackedPlayer);
+	//drawTexture(DEPTH_TEXTURE);
+	drawTexture(IMAGE_TEXTURE);
+	drawNuiSkeleton(trackedDataIndex);
 #if defined(USE_AUDIO)
-	drawSoundSource(trackedPlayer);
+	drawSoundSource(trackedDataIndex);
 #endif
 
 	glFlush ();					// Flush The GL Rendering Pipeline
@@ -829,7 +831,7 @@ void idleGL()
 	storeNuiAudio();
 #endif
 #if defined(USE_FACETRACKER)
-	storeFace(trackedPlayer);
+	storeFace(trackedDataIndex);
 #endif
 	glutPostRedisplay();
 }
