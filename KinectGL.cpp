@@ -7,7 +7,7 @@
 
 // Note: May system will down, if you enable sound localization and face tracking at once.
 #define USE_AUDIO
-//#define USE_FACETRACKER
+#define USE_FACETRACKER
 
 #define STDERR(str) OutputDebugString(L##str)
 //#define STDERR(str) 
@@ -227,7 +227,7 @@ void storeNuiAudio(void)
 
 void drawSoundSource(int playerID)
 {
-	const float allowErrAngle = 0.1;
+	const float allowErrAngle = 0.2;
 	const int JointsNum = 5;
 	int searchJointArray[JointsNum] = {NUI_SKELETON_POSITION_HEAD,NUI_SKELETON_POSITION_HAND_RIGHT,NUI_SKELETON_POSITION_HAND_LEFT,NUI_SKELETON_POSITION_FOOT_RIGHT,NUI_SKELETON_POSITION_FOOT_LEFT};
 	float skelAngles[JointsNum];
@@ -397,7 +397,9 @@ void initNui(void)	        // We call this right after Nui functions called.
 	if(FAILED(hr)) STDERR("Cannot connect with kinect0.\r\n");
 
 	hr = pNuiSensor->NuiInitialize(
+#if defined(USE_AUDIO)
 		NUI_INITIALIZE_FLAG_USES_AUDIO |
+#endif
 		//NUI_INITIALIZE_FLAG_USES_DEPTH |
 		NUI_INITIALIZE_FLAG_USES_DEPTH_AND_PLAYER_INDEX | 
 		NUI_INITIALIZE_FLAG_USES_COLOR | 
@@ -554,9 +556,9 @@ void storeNuiDepth(void)
 
 		unsigned short *p = (unsigned short *)pBuffer;
 		for(int i=0;i<pTexture->BufferLen()/2;i++){
-			//*p = (unsigned short)((*p & 0xff00)>>8) | ((*p & 0x00ff)<<8);
+			*p = (unsigned short)((*p & 0xff00)>>8) | ((*p & 0x00ff)<<8);
 			//*p = (unsigned short)((*p & 0xfff8)>>3);
-			*p = (unsigned short)(NuiDepthPixelToDepth(*p));
+			//*p = (unsigned short)(NuiDepthPixelToDepth(*pBuffer));
 			p++;
 		}
 		glBindTexture(GL_TEXTURE_2D, bg_texture[DEPTH_TEXTURE]);
@@ -579,7 +581,7 @@ void storeNuiSkeleton(void)
 	NUI_SKELETON_FRAME SkeletonFrame = {0};
 	HRESULT hr = pNuiSensor->NuiSkeletonGetNextFrame( 0, &SkeletonFrame );
 
-	bool bFoundSkeleton = true;
+	bool bFoundSkeleton = false;
 	for( int i = 0 ; i < NUI_SKELETON_COUNT ; i++ ){
 		if( SkeletonFrame.SkeletonData[i].eTrackingState == NUI_SKELETON_TRACKED ){
 			bFoundSkeleton = true;
@@ -807,8 +809,8 @@ void drawGL()
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	
-	//drawTexture(DEPTH_TEXTURE);
-	drawTexture(IMAGE_TEXTURE);
+	drawTexture(DEPTH_TEXTURE);
+	//drawTexture(IMAGE_TEXTURE);
 	drawNuiSkeleton(trackedPlayer);
 #if defined(USE_AUDIO)
 	drawSoundSource(trackedPlayer);
